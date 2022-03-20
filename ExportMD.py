@@ -9,6 +9,7 @@
 from prettytable import PrettyTable
 import re
 import os
+import time
 import aiohttp
 import asyncio
 from urllib import parse
@@ -84,11 +85,14 @@ class ExportMD:
         api = "/repos/%s/docs/%s" % (repo_id, slug)
         async with aiohttp.ClientSession() as session:
             result = await self.req(session, api)
-            body = result['data']['body']
-            body = re.sub("<a name=\".*\"></a>","", body)  # 正则去除语雀导出的<a>标签
-            body = re.sub(r'\<br \/\>!\[image.png\]',"\n![image.png]",body) # 正则去除语雀导出的图片后紧跟的<br \>标签
-            body = re.sub(r'\)\<br \/\>', ")\n", body)  # 正则去除语雀导出的图片后紧跟的<br \>标签
-            return body
+            if 'data' not in result:
+                print(result)
+            else:
+                body = result['data']['body']
+                body = re.sub("<a name=\".*\"></a>", "", body)  # 正则去除语雀导出的<a>标签
+                body = re.sub(r'\<br \/\>!\[image.png\]', "\n![image.png]", body)  # 正则去除语雀导出的图片后紧跟的<br \>标签
+                body = re.sub(r'\)\<br \/\>', ")\n", body)  # 正则去除语雀导出的图片后紧跟的<br \>标签
+                return body
 
     # 选择知识库
     def selectRepo(self):
@@ -122,8 +126,11 @@ class ExportMD:
         :return: none
         """
         body = await self.get_body(repo_id, slug)
-        new_body, image_list = await self.to_local_image_src(body)
+        if body is None:
+            print("📑 %s 导出失败！" % color(title, fore='green', style='bright'))
+            return
 
+        new_body, image_list = await self.to_local_image_src(body)
         if image_list:
             # 图片保存位置: .yuque/<repo_name>/assets/<filename>
             save_dir = os.path.join(self.export_dir, repo_name, "assets")
@@ -141,7 +148,7 @@ class ExportMD:
     async def to_local_image_src(self, body):
         body = re.sub(r'\<br \/\>!\[image.png\]',"\n![image.png]",body) # 正则去除语雀导出的图片后紧跟的<br \>标签
         body = re.sub(r'\)\<br \/\>', ")\n", body)  # 正则去除语雀导出的图片后紧跟的<br \>标签
-        
+
         pattern = r"!\[(?P<img_name>.*?)\]" \
                   r"\((?P<img_src>https:\/\/cdn\.nlark\.com\/yuque.*\/(?P<slug>\d+)\/(?P<filename>.*?\.[a-zA-z]+)).*\)"
         repl = r"![\g<img_name>](./assets/\g<filename>)"
@@ -176,7 +183,7 @@ class ExportMD:
         self.print_logo()
         await self.getRepo()
         repo_name_list = self.selectRepo()
-        
+
         self.mkDir(self.export_dir)  # 创建用于存储知识库文章的文件夹
 
         # 遍历所选知识库
@@ -188,9 +195,15 @@ class ExportMD:
             repo_id = self.repo[repo_name]
             docs = await self.get_docs(repo_id)
 
-            await asyncio.gather(
-                *(self.download_md(repo_id, slug, repo_name, title) for slug, title in docs.items())
-            )
+            # 异步导出接口会报错，修改为同步导出，且每次导出等待100ms
+            for slug in docs:
+                time.sleep(0.1)
+                title = docs[slug]
+                await self.download_md(repo_id, slug, repo_name, title)
+
+            # await asyncio.gather(
+            #     *(self.download_md(repo_id, slug, repo_name, title) for slug, title in docs.items())
+            # )
 
         print("\n" + color('🎉 导出完成！', fore='green', style='bright'))
         print("已导出到：" + color(os.path.realpath(self.export_dir), fore='green', style='bright'))
